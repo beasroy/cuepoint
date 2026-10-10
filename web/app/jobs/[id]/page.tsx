@@ -75,10 +75,7 @@ export default function JobPage() {
         <div>
           <p className="text-xs uppercase tracking-[0.24em] text-accent-strong">Processing</p>
           <h1 className="text-2xl font-semibold tracking-tight">{job.originalName}</h1>
-          <p className="font-mono text-xs text-muted">
-            job {job.id}
-            {!!job.attempts && ` · attempt ${job.attempts} of ${job.maxAttempts}`}
-          </p>
+          <p className="font-mono text-xs text-muted">job {job.id}</p>
         </div>
         <div className="flex items-center gap-3">
           <StatusBadge status={job.status} />
@@ -181,6 +178,8 @@ export default function JobPage() {
         </section>
       )}
 
+      {/* Scoped to this attempt: a run served entirely from cache calls nothing, and then there is no
+          cost to show, so the whole section stays hidden rather than reporting an earlier run's bill. */}
       {audit && audit.totals.calls > 0 && (
         <section className="space-y-3">
           <h2 className="font-semibold">

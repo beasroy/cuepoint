@@ -623,14 +623,26 @@ export function createRepo(db: DatabaseSync, clock: Clock = () => new Date(), on
           detail: e.detail ? JSON.parse(e.detail) : undefined,
         }),
       );
+      // Cost is reported for THIS attempt only, never the job's lifetime. A job id is the video's
+      // hash, so a re-upload or a retry reuses it and model_calls keeps accumulating: summing the
+      // whole table answers "what has this video ever cost", when the panel is asked "what did this
+      // run cost". An attempt that called nothing — every stage served from cache — therefore reports
+      // nothing, and the UI hides the section rather than showing an earlier attempt's bill.
+      // jobs.attempts is the attempt the worker is on (or finished on). The fallback covers a job
+      // whose calls were recorded without the counter moving — nothing the queue does, but it keeps
+      // a bookkeeping mismatch from silently hiding calls that exist.
+      const latestAttempt = (r.attempts ||
+        ((db.prepare("SELECT MAX(attempt) AS a FROM model_calls WHERE job_id = ?").get(jobId) as Row | undefined)?.a ?? null)) as
+        | number
+        | null;
       const usage = (
         db
           .prepare(
             `SELECT provider, model, COUNT(*) AS calls, SUM(1 - ok) AS errors, SUM(latency_ms) AS latency,
                COALESCE(SUM(cost_usd), 0) AS cost, COALESCE(SUM(audio_sec), 0) AS audio
-             FROM model_calls WHERE job_id = ? GROUP BY provider, model ORDER BY cost DESC`,
+             FROM model_calls WHERE job_id = ? AND attempt IS ? GROUP BY provider, model ORDER BY cost DESC`,
           )
-          .all(jobId) as Row[]
+          .all(jobId, latestAttempt) as Row[]
       ).map((u) => ({
         provider: u.provider,
         model: u.model,
@@ -645,9 +657,9 @@ export function createRepo(db: DatabaseSync, clock: Clock = () => new Date(), on
           .prepare(
             `SELECT COALESCE(stage, '(none)') AS stage, COUNT(*) AS calls, SUM(1 - ok) AS errors, SUM(latency_ms) AS latency,
                COALESCE(SUM(cost_usd), 0) AS cost, COALESCE(SUM(audio_sec), 0) AS audio
-             FROM model_calls WHERE job_id = ? GROUP BY stage ORDER BY cost DESC`,
+             FROM model_calls WHERE job_id = ? AND attempt IS ? GROUP BY stage ORDER BY cost DESC`,
           )
-          .all(jobId) as Row[]
+          .all(jobId, latestAttempt) as Row[]
       ).map((s) => ({
         stage: s.stage,
         calls: s.calls,
@@ -661,7 +673,9 @@ export function createRepo(db: DatabaseSync, clock: Clock = () => new Date(), on
       // exact label. Blanking digits merges "placement chunk 4" and "placement chunk 11" into one row
       // without a hand-kept list of label patterns to keep in sync as labels change.
       const byKindMap = new Map<string, CallKindUsage>();
-      for (const c of db.prepare("SELECT label, provider, model, ok, cost_usd, audio_sec FROM model_calls WHERE job_id = ?").all(jobId) as Row[]) {
+      for (const c of db
+        .prepare("SELECT label, provider, model, ok, cost_usd, audio_sec FROM model_calls WHERE job_id = ? AND attempt IS ?")
+        .all(jobId, latestAttempt) as Row[]) {
         const kind = (c.label ?? "(unlabeled)").replace(/\d+/g, "N");
         const key = `${kind}\0${c.provider}\0${c.model}`;
         const row = byKindMap.get(key) ?? { kind, provider: c.provider, model: c.model, calls: 0, errors: 0, costUsd: 0, audioSec: 0 };
@@ -701,6 +715,7 @@ export function createRepo(db: DatabaseSync, clock: Clock = () => new Date(), on
         usage,
         byStage,
         byKind,
+        attempt: latestAttempt ?? undefined,
         totals: {
           calls: usage.reduce((s, u) => s + u.calls, 0),
           errors: usage.reduce((s, u) => s + u.errors, 0),

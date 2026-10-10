@@ -40,12 +40,16 @@ export interface JobAuditResponse {
   jobId: string;
   attempts: JobAttempt[];
   events: AuditEvent[];
-  /** Every call this job made, by provider+model. */
+  /** The attempt that usage/byStage/byKind/totals describe. Undefined before the first attempt. */
+  attempt?: number;
+  /** The calls that attempt made, by provider+model. */
   usage: ModelUsage[];
   /** The same calls, by pipeline stage (ingest, transcribe, match, ...). */
   byStage: StageUsage[];
   /** The same calls again, by what each call was for (e.g. "placement chunk N", "story", "listen ..."). */
   byKind: CallKindUsage[];
+  /** That one attempt, not the job's lifetime — a retry or re-upload keeps the job id. Zero calls
+   *  means this attempt ran entirely from cache, and there is no cost to show for it. */
   totals: { calls: number; errors: number; costUsd: number };
   /** Most recent calls first. */
   modelCalls: ModelCall[];
