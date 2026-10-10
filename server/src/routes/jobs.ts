@@ -16,7 +16,7 @@ import { loadCatalogue, withStaleFlag } from "../catalogue/store";
 import { getRepo, type Requester } from "../db";
 import { ARTIFACTS, exists, readJson, writeJson } from "../lib/artifacts";
 import { hashFile } from "../lib/hash";
-import { uploadDir, uploadStorage } from "../lib/uploads";
+import { uploadDir, uploadStorage, type HashedFile } from "../lib/uploads";
 import { subscribeJobEvents } from "../jobs/events";
 import { findSourceVideo, jobDir } from "../jobs/runner";
 import type { Break, DebugReport } from "shared";
@@ -66,7 +66,8 @@ export async function importLegacyJobs() {
 jobsRouter.post("/api/jobs", upload.single("video"), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: "multipart field 'video' is required" });
-    const hash = await hashFile(req.file.path);
+    // Hashed while it streamed in (see lib/uploads.ts); the fallback covers any other storage engine.
+    const hash = (req.file as HashedFile).sha256 ?? (await hashFile(req.file.path));
     const dir = jobDir(hash);
     await fs.mkdir(dir, { recursive: true });
     if (await findSourceVideo(dir)) {

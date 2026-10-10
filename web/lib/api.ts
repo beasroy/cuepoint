@@ -126,6 +126,10 @@ export function uploadVideo(file: File, onProgress: (fraction: number) => void):
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${API_URL}/api/jobs`);
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+    // The last progress event is not guaranteed to land on exactly 1, and the request is not over
+    // when the bytes are: the server still hashes the file and creates the job. Reporting 1 here
+    // lets the page say so rather than leaving a full bar that looks stuck.
+    xhr.upload.onload = () => onProgress(1);
     xhr.onload = () => {
       try {
         const body = JSON.parse(xhr.responseText);

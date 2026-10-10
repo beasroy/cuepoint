@@ -106,9 +106,16 @@ export default function UploadPage() {
         {progress !== null && (
           <div className="space-y-1">
             <div className="h-2 overflow-hidden rounded-full bg-surface-elevated">
-              <div className="h-full bg-accent transition-all" style={{ width: `${Math.round(progress * 100)}%` }} />
+              <div
+                className={`h-full bg-accent transition-all ${progress >= 1 ? "animate-pulse" : ""}`}
+                style={{ width: `${Math.round(progress * 100)}%` }}
+              />
             </div>
-            <p className="text-xs text-muted">Uploading... {Math.round(progress * 100)}%</p>
+            {/* Once the bytes are sent the server is still hashing the file and creating the job,
+                which on a slow disk takes a while — say so instead of showing a stalled 100%. */}
+            <p className="text-xs text-muted">
+              {progress < 1 ? `Uploading... ${Math.round(progress * 100)}%` : "Upload complete — preparing the episode..."}
+            </p>
           </div>
         )}
         {error && <p className="text-sm text-accent-strong">{error}</p>}
