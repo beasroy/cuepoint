@@ -74,9 +74,13 @@ export const config = {
     /** Scribe word timing is tight (median 0.22s, p99 1.2s), but a rare span runs to tens of
      *  seconds; capping bounds that without truncating real words. */
     maxWordSec: 2.0,
-    /** Audio events ([music], [crying], [screaming]) carry no words but are not silence, so they
+    /** Audio events ([crying], [screaming], [laughter]) carry no words but are not silence, so they
      *  count as speech walls: no cut may land inside one. */
     audioEventsAreSpeech: true,
+    /** Music is the exception. A [music] tag means Scribe heard no words there, which is the one
+     *  place television reliably cuts to ads — treating it as a wall blocked 3.5–18.6% of each
+     *  episode measured here, including three separate ~2-minute beds in one. */
+    musicEventsAreSpeech: false,
     /** Billed per hour of audio; Scribe returns no price, so cost is derived from this. */
     usdPerHour: Number(process.env.SCRIBE_USD_PER_HOUR ?? 0.22),
     requestTimeoutMs: 180_000,
@@ -133,6 +137,10 @@ export const config = {
     /** In between, the audio LLM is asked this many times; any "speech" (with words) or failed call = no ad.
      *  The LLM is only a tie-breaker: on quiet audio it invents plausible dialogue, so it never decides clear cases. */
     llmVotes: 2,
+    /** Set LISTEN_LLM_RECHECK=false to decide the unsure band without the audio LLM. The band then
+     *  fails closed (unsure = speech = no ad), because the VAD cannot be trusted to catch what the
+     *  LLM catches there: a cut with audible dialogue measured 0.154, far below any usable threshold. */
+    llmRecheck: process.env.LISTEN_LLM_RECHECK !== "false",
     vadModelPath: resolveFromRoot("server/models/silero_vad.onnx"),
   },
 

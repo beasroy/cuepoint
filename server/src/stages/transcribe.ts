@@ -22,10 +22,20 @@ export interface ScribeSettings {
   uttSplitSec: number;
   maxWordSec: number;
   audioEventsAreSpeech: boolean;
+  musicEventsAreSpeech: boolean;
 }
 
 /** Bump when merge/filter logic changes so cached transcripts are rebuilt (raw chunk responses are reused). */
-const TRANSCRIPT_BUILD_VERSION = 8;
+const TRANSCRIPT_BUILD_VERSION = 9;
+
+/**
+ * Pure: is this audio event music rather than a voice? A cut inside someone crying is as wrong as
+ * one mid-sentence, but a music bed is where television puts its breaks — thresholds.minSpeechFreeSec
+ * exists to allow exactly that — so music must not become a wall that forbids cutting.
+ * Scribe's tag text is inconsistent and sometimes garbled ("[বাদ্যসদ]", "[আhapsodyমূলক মিউজিক]"),
+ * so this matches loosely and anything it cannot recognise stays a wall.
+ */
+export const isMusicEvent = (text: string) => /music|jingle|song|theme|মিউজিক|সঙ্গীত|সংগীত|গান|বাদ্য/i.test(text);
 
 const scribeDir = (ctx: StageContext) => artifactPath(ctx, path.join("transcribe", `scribe-${ctx.config.scribe.model}`));
 
@@ -106,8 +116,8 @@ export function scribeAudioEvents(raw: ScribeResponse, chunk: AudioChunk): Audio
 
 /**
  * Pure: Scribe words → audio-aligned speech intervals, each capped to `maxWordSec` from its start.
- * Audio-event spans join them when `audioEventsAreSpeech`: they carry no words, but a cut inside a
- * song or someone crying is exactly as wrong as one mid-sentence.
+ * Audio-event spans join them when `audioEventsAreSpeech`: they carry no words, but a cut inside
+ * someone crying is exactly as wrong as one mid-sentence. Music is the exception — see isMusicEvent.
  */
 export function scribeSpeech(raw: ScribeResponse, chunk: AudioChunk, s: ScribeSettings): Interval[] {
   const off = chunk.offsetSec;
@@ -118,7 +128,12 @@ export function scribeSpeech(raw: ScribeResponse, chunk: AudioChunk, s: ScribeSe
     const end = Math.min(off + Number(w.end), start + s.maxWordSec, chunkEnd);
     if (end > start) out.push({ start, end });
   }
-  if (s.audioEventsAreSpeech) out.push(...scribeAudioEvents(raw, chunk).map(({ start, end }) => ({ start, end })));
+  if (s.audioEventsAreSpeech)
+    out.push(
+      ...scribeAudioEvents(raw, chunk)
+        .filter((e) => s.musicEventsAreSpeech || !isMusicEvent(e.text))
+        .map(({ start, end }) => ({ start, end })),
+    );
   return out;
 }
 
@@ -170,8 +185,8 @@ export async function runTranscribe(
   signals: Signals,
 ): Promise<Transcript> {
   const out = artifactPath(ctx, ARTIFACTS.transcript);
-  const { uttSplitSec, maxWordSec, audioEventsAreSpeech } = ctx.config.scribe;
-  const settings: ScribeSettings = { uttSplitSec, maxWordSec, audioEventsAreSpeech };
+  const { uttSplitSec, maxWordSec, audioEventsAreSpeech, musicEventsAreSpeech } = ctx.config.scribe;
+  const settings: ScribeSettings = { uttSplitSec, maxWordSec, audioEventsAreSpeech, musicEventsAreSpeech };
   const key = hashJson({
     v: TRANSCRIPT_BUILD_VERSION,
     dir: scribeDir(ctx),

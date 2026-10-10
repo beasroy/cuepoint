@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTranscript, scribeAudioEvents, scribePieces, scribeSpeech, type ScribeSettings } from "../src/stages/transcribe";
+import { buildTranscript, isMusicEvent, scribeAudioEvents, scribePieces, scribeSpeech, type ScribeSettings } from "../src/stages/transcribe";
 import { config } from "../src/config";
 
 const chunk = { index: 1, file: "c.mp3", offsetSec: 120, durationSec: 120 };
@@ -7,6 +7,7 @@ const S: ScribeSettings = {
   uttSplitSec: config.scribe.uttSplitSec,
   maxWordSec: config.scribe.maxWordSec,
   audioEventsAreSpeech: config.scribe.audioEventsAreSpeech,
+  musicEventsAreSpeech: config.scribe.musicEventsAreSpeech,
 };
 
 // Shape taken from a real ElevenLabs scribe_v2 response (Bengali): one flat `words` list carrying
@@ -62,10 +63,30 @@ describe("scribeSpeech", () => {
     ]);
   });
 
-  it("counts audio events as walls too: a cut inside music or crying is as wrong as one mid-sentence", () => {
-    const withEvents = scribeSpeech(scribe, chunk, { ...S, audioEventsAreSpeech: true });
+  it("counts a voice audio event as a wall: a cut inside someone crying is as wrong as one mid-sentence", () => {
+    const crying = { ...scribe, words: scribe.words.map((w) => (w.type === "audio_event" ? { ...w, text: "[কান্না]" } : w)) };
+    const withEvents = scribeSpeech(crying, chunk, { ...S, audioEventsAreSpeech: true });
     expect(withEvents).toContainEqual({ start: 150, end: 160 });
-    expect(withEvents).toHaveLength(scribeSpeech(scribe, chunk, { ...S, audioEventsAreSpeech: false }).length + 1);
+    expect(withEvents).toHaveLength(scribeSpeech(crying, chunk, { ...S, audioEventsAreSpeech: false }).length + 1);
+  });
+
+  it("does not wall off music: a music bed is where a break belongs, not a place ads may not go", () => {
+    const withEvents = scribeSpeech(scribe, chunk, { ...S, audioEventsAreSpeech: true });
+    expect(withEvents).not.toContainEqual({ start: 150, end: 160 });
+    expect(withEvents).toEqual(scribeSpeech(scribe, chunk, { ...S, audioEventsAreSpeech: false }));
+    // ...unless the setting says otherwise.
+    expect(scribeSpeech(scribe, chunk, { ...S, audioEventsAreSpeech: true, musicEventsAreSpeech: true })).toContainEqual({ start: 150, end: 160 });
+  });
+});
+
+describe("isMusicEvent", () => {
+  it("recognises Scribe's music tags across both languages, and its garbled ones", () => {
+    for (const t of ["[music]", "[suspenseful music]", "[outro jingle]", "[মিউজিক]", "[বাদ্যসঙ্গীত]", "[গান]", "[বাদ্যসদ]"])
+      expect(isMusicEvent(t), t).toBe(true);
+  });
+  it("leaves voices and other sounds as walls", () => {
+    for (const t of ["[screaming]", "[crying]", "[heavy breathing]", "[হাসি]", "[ফোন রিং]", "[শব্দ]"])
+      expect(isMusicEvent(t), t).toBe(false);
   });
 });
 

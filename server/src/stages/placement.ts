@@ -29,7 +29,7 @@ import { pickCreative, shortestCreative } from "./creatives";
 import { listenCheck } from "./listen";
 
 /** Bump when the chunk, cut, scheduling or check logic below changes, so cached placements are recomputed. */
-export const PLACEMENT_LOGIC_VERSION = 16;
+export const PLACEMENT_LOGIC_VERSION = 17;
 
 /** Safety valve for pathological inputs; real episodes explore a few thousand schedules at most (see select.ts). */
 const MAX_SEARCH_NODES = 500_000;
@@ -428,10 +428,10 @@ export async function runPlacement(
     }
     const sig = { silences, shotCuts };
     const show = cfg.placement.showSilenceMinSec;
-    const system = placementSystemPrompt({ blockAll, lineCount: current.length });
+    const system = placementSystemPrompt({ blockAll, storySoFar: programme?.summary ?? "" });
     const user = placementUserPrompt({
-      storySoFar: programme?.summary ?? "",
       brands: brands.map(toPlacementBrand),
+      lineCount: current.length,
       previousLines: renderLines(prev, "P", sig, { from: prev[0]?.start ?? w.from, to: current[0].start, showSilenceMinSec: show }),
       currentLines: renderLines(current, "", sig, {
         from: current[0].start,
@@ -451,6 +451,9 @@ export async function runPlacement(
           user,
           schemaName: "ad_slot_plan",
           schema: placementJsonSchema({ lineCount: current.length, brandIds: brands.map((b) => b.id), contexts: ctx.catalogue.negativeVocab }),
+          // Every chunk of every episode sends the same system prompt and brand catalogue, so they
+          // all share one key; it carries the prompt version so a prompt edit starts a fresh cache.
+          cacheKey: `placement-v${PLACEMENT_PROMPT_VERSION}-${ctx.catalogue.hash.slice(0, 8)}`,
           logFile: llmLog,
         }),
       );

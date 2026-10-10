@@ -6,16 +6,24 @@ import { z } from "zod";
  * other's answer), so the model is never told what an earlier or later chunk decided. Code picks
  * the final schedule across every chunk's answer afterwards (see scheduleBreaks in placement.ts).
  */
-export const PLACEMENT_PROMPT_VERSION = 4;
+export const PLACEMENT_PROMPT_VERSION = 7;
 
-export function placementSystemPrompt(o: { blockAll: string[]; lineCount: number }): string {
+/**
+ * The head of every request, and the only part a provider reliably serves from cache, so it is
+ * ordered least-volatile first: the rules never change, then the episode's story. A cache matches
+ * the longest common prefix, so a chunk of the same episode is served through the story, and a
+ * chunk of a different one is still served through the rules. Nothing per-chunk belongs in here —
+ * the number of current lines lives in the user message and in the schema's line_id enum, and the
+ * brand catalogue stays in the user message because it is the part most likely to be edited.
+ */
+export function placementSystemPrompt(o: { blockAll: string[]; storySoFar: string }): string {
   return `
 You are the ad-break planner for a Bengali TV drama on a streaming service. You look at one stretch of the episode and decide whether one mid-roll ad should play in it, after which line, and for which brand. Pick the single best moment in the whole stretch.
 
 You are one of several separate calls, one per stretch of the episode, each looking only at its own stretch. You are not told what any other stretch decided, and code will not necessarily use your pick even if it is good: it picks the best combination across every stretch afterwards, keeping ads apart and never repeating a brand back to back. Judge only your own stretch on its own merits.
 
 WHAT YOU RECEIVE
-- STORY SO FAR: a short summary of the episode, for background only.
+- STORY SO FAR: a short summary of the episode, at the end of these instructions. Background only.
 - BRANDS: each with "fits_scenes_about" (scenes it suits) and "never_next_to" (scenes it must never appear next to).
 - PREVIOUS LINES (P1, P2, …) and NEXT LINES (N1, N2, …): dialogue just before and after. Context only. You cannot place an ad after these lines.
 - CURRENT LINES (1, 2, 3, …): the stretch you are planning. Ads can only go after one of these.
@@ -33,7 +41,7 @@ HOW TO WORK
 RULES
 Placement
 1. An ad plays after a line, at a point backed by a measured silence (or, if there truly is none nearby, the quietest, most conversation-ending point you can find).
-2. That line must be the LAST line of a finished conversation. Never place an ad in the middle of a conversation, between a question and its answer, or after a line that calls someone over or starts something ("come here", "listen", "wait").
+2. That line must be the LAST line of a finished conversation. Never place an ad in the middle of a conversation, between a question and its answer, or after a line that calls someone over or starts something ("come here", "listen", "wait"). This includes a line telling someone to do something that then happens on screen ("eat", "drink", "sit down", "open it", "take it", "look"): the action follows the line, so the scene is still running even though nobody speaks during it. An offer or an invitation is the start of something, never the end of it. A change of subject between the same people in the same place is also not the end of a conversation — the scene itself has to end, not just the topic.
 3. Never interrupt suspense, an argument, a threat, a revelation or a cliffhanger, even if the argument is only verbal.
 Suitability
 4. The brand must fit what the viewer just watched or is about to watch, using its "fits_scenes_about". A brand that only fits the episode's general theme, and nothing in the scenes around this line, does not fit.
@@ -66,13 +74,16 @@ Return JSON only, in exactly this shape:
   "why_not_others": "..."
 }
 - placement: your best choice, or null if no ad should play in this stretch.
-- line_id: a current-line number (1 to ${o.lineCount}).
+- line_id: the number of one of the CURRENT LINES, as numbered in the input.
 - brand_id: a brand_id from BRANDS.
 - fit (0–1): 0 = unrelated to the scenes around the line, 0.5 = loosely related, 1 = directly matches what they show.
 - reason: one English sentence: which conversation ends at that line, what silence or shot cut is there, and why this brand fits.
 - alternatives: 2 other valid choices, best first, preferably after different lines AND a different brand each (code checks every choice, and uses the next one if yours fails or if code needs a different brand here to avoid repeating one). Fewer only if fewer points pass the rules.
 - contexts_nearby: on EACH choice, every item from any brand's "never_next_to" that appears in the scene before OR after THAT choice's own line. Judge each choice at its own line and nowhere else: a sensitive scene next to one choice does not belong on another choice 90 seconds away, and one next to an alternative must be listed on that alternative even if your main pick is clear of it. Use the exact strings. Empty only if you are sure there is none for that line.
 - why_not_others: one or two sentences on why other points were not chosen.
+
+STORY SO FAR
+${o.storySoFar || "(not available)"}
 `.trim();
 }
 
@@ -84,24 +95,26 @@ export interface PlacementBrand {
   never_next_to: string[];
 }
 
+/**
+ * Everything that changes. BRANDS leads because it is the same for every chunk, so it still shares
+ * a prefix between them; the story is not here — it sits at the end of the system prompt, where
+ * caching actually reaches (see placementSystemPrompt).
+ */
 export function placementUserPrompt(o: {
-  storySoFar: string;
   brands: PlacementBrand[];
+  lineCount: number;
   previousLines: string;
   currentLines: string;
   nextLines: string;
 }): string {
   return `
-STORY SO FAR
-${o.storySoFar || "(not available)"}
-
 BRANDS
 ${JSON.stringify(o.brands, null, 2)}
 
 PREVIOUS LINES (context only, no ads here)
 ${o.previousLines || "(none)"}
 
-CURRENT LINES (ads only after one of these)
+CURRENT LINES (ads only after one of these; numbered 1 to ${o.lineCount})
 ${o.currentLines}
 
 NEXT LINES (context only, no ads here)

@@ -38,6 +38,15 @@ export async function chatJson(opts: {
   model?: string;
   /** Appends one JSONL line per attempt (request + response, or request + error) to this file. */
   logFile?: string;
+  /**
+   * Groups calls that share a prompt prefix, so the provider can serve the fixed head of the
+   * request from its cache at a tenth of the input rate instead of re-reading it every call. Only
+   * the stable part benefits: the per-call tail is always read fresh, so the key must be the same
+   * for every call built from the same fixed head and must change when that head changes.
+   * Measured on placement: without it, consecutive calls sharing ~2.2k tokens of prefix cached
+   * nothing at all; with it, a third of each call's input came from cache.
+   */
+  cacheKey?: string;
 }): Promise<unknown> {
   const model = opts.model ?? or.reasonModel;
   return withRetry(
@@ -56,6 +65,7 @@ export async function chatJson(opts: {
           type: "json_schema",
           json_schema: { name: opts.schemaName, strict: true, schema: opts.schema },
         },
+        ...(opts.cacheKey ? { prompt_cache_key: opts.cacheKey } : {}),
         usage: { include: true },
       };
       let res: any;

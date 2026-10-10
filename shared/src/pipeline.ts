@@ -79,6 +79,8 @@ export interface ListenCheck {
   speech: boolean;
   method: "vad" | "llm";
   vad: { max: number; frac: number };
+  /** Half-window actually judged: listen.windowSec, clamped so it never reaches past the pause. */
+  windowSec: number;
   speechNear: boolean;
   answers?: { speechNearMark: boolean; heard: string; transcript: string }[];
   reason: string;

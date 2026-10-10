@@ -18,7 +18,10 @@ import {
   listenUserText,
 } from "../../prompts/listen";
 import { artifactPath, type StageContext } from "../context";
-import { llmVerdict, speechIntervalNear, vadGate, type LlmListenAnswer } from "./rules";
+import { listenHalfWindow, llmVerdict, speechIntervalNear, vadGate, type LlmListenAnswer } from "./rules";
+
+/** Never judge less than this either side of the cut, however tight the pause. */
+const MIN_HALF_WINDOW_SEC = 0.25;
 
 /** The cut being checked: an id for the clip's log label, and the time itself. */
 export interface ListenTarget {
@@ -42,16 +45,17 @@ export async function listenCheck(
 ): Promise<ListenOutcome> {
   const t = ctx.config.listen;
   const cut = target.cutTime;
+  const half = listenHalfWindow(speech, cut, t.windowSec, MIN_HALF_WINDOW_SEC);
   let vad;
   try {
-    vad = await vadAround(t.vadModelPath, wav, cut, t.windowSec);
+    vad = await vadAround(t.vadModelPath, wav, cut, half);
   } catch (err) {
     return { rejected: `speech check failed, cannot confirm no speech (${(err as Error).message.slice(0, 120)})` };
   }
-  const speechNear = speechIntervalNear(speech, cut, t.windowSec);
+  const speechNear = speechIntervalNear(speech, cut, half);
   const gate = vadGate(vad, speechNear, t);
   const round = (n: number) => Math.round(n * 1000) / 1000;
-  const base = { vad: { max: round(vad.max), frac: round(vad.frac) }, speechNear };
+  const base = { vad: { max: round(vad.max), frac: round(vad.frac) }, windowSec: round(half), speechNear };
 
   if (gate !== "unsure") {
     const speechHeard = gate === "speech";
@@ -61,9 +65,16 @@ export async function listenCheck(
       method: "vad",
       reason: speechHeard
         ? `voice activity ${vad.max.toFixed(2)} at the cut (≥ ${t.vadSpeechMin})`
-        : `no voice activity at the cut (${vad.max.toFixed(2)} < ${t.vadQuietMax}) and no transcribed word within ${t.windowSec}s`,
+        : `no voice activity at the cut (${vad.max.toFixed(2)} < ${t.vadQuietMax}) and no transcribed word within ${half.toFixed(2)}s`,
     };
     return { check, rejected: speechHeard ? `speech at the cut: ${check.reason}` : undefined };
+  }
+
+  // The audio LLM turned off: the unsure band has no second opinion, so it fails closed. Accepting
+  // it instead would place ads over speech the VAD scored as low as 0.154 (measured, confirmed by ear).
+  if (!t.llmRecheck) {
+    const reason = `voice activity ${vad.max.toFixed(2)} is unclear and the audio re-check is off`;
+    return { check: { ...base, speech: true, method: "vad", reason }, rejected: reason };
   }
 
   const dir = artifactPath(ctx, "listen");
