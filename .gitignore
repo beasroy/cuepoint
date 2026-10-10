@@ -4,7 +4,6 @@ data/
 .next/
 dist/
 samples/
-catalogue/ads/
 PLAN.md
 ROADMAP.md
 *.tmp-*
