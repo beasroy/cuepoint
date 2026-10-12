@@ -134,13 +134,27 @@ describe("scheduleBreaks", () => {
     expect(run([[close1], [close2]]).picks.map((p) => p.item.brandId)).toEqual(["a", "b"]);
   });
 
-  it("never repeats a brand back to back, even across a chunk skipped in between", () => {
-    // Chunk 2 offers its own best pick ("a", tying the brand either side) and an alternative ("b").
+  it("airs the same brand on two breaks in a row when it is clearly the better fit", () => {
+    // Chunk 2 can take "a" again (fit 0.9) or "b" (fit 0.4). Even carrying the repeat penalty the
+    // better-fitting repeat wins: the right advertiser against the right scene serves a viewer
+    // better than a worse match chosen only for variety.
     const c1 = item(1, 100, "a", 0.9, 3);
-    const c2a = item(2, 900, "a", 0.9, 3);
-    const c2b = item(2, 900, "b", 0.5, 3);
-    const c3 = item(3, 1700, "a", 0.9, 3);
-    expect(run([[c1], [c2a, c2b], [c3]]).picks.map((p) => p.item.brandId)).toEqual(["a", "b", "a"]);
+    const c2a = item(2, 900, "a", 0.9, 3); // 0.96, less 0.15 for the repeat = 0.81
+    const c2b = item(2, 900, "b", 0.4, 3); // 0.76, no penalty
+    expect(run([[c1], [c2a, c2b]], 0.15, [], 0.15).picks.map((p) => p.item.brandId)).toEqual(["a", "a"]);
+  });
+
+  it("but a close call still goes to the fresh brand", () => {
+    const c1 = item(1, 100, "a", 0.9, 3);
+    const c2a = item(2, 900, "a", 0.9, 3); // 0.96, less 0.15 = 0.81
+    const c2b = item(2, 900, "b", 0.85, 3); // 0.94 — behind before the penalty, ahead after it
+    expect(run([[c1], [c2a, c2b]], 0.15, [], 0.15).picks.map((p) => p.item.brandId)).toEqual(["a", "b"]);
+  });
+
+  it("the repeat cap still bounds it, however well the brand fits", () => {
+    const only = (chunk: number, cut: number) => item(chunk, cut, "a", 0.95, 3);
+    const picks = run([[only(1, 100)], [only(2, 900)], [only(3, 1700)]], 0.15, [], 0.15, 2).picks;
+    expect(picks.map((p) => p.item.brandId)).toEqual(["a", "a"]); // third is refused by the cap
   });
 
   it("stays under the ad-load budget, and says so for the item that didn't fit", () => {

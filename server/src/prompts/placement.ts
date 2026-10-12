@@ -6,7 +6,7 @@ import { z } from "zod";
  * other's answer), so the model is never told what an earlier or later chunk decided. Code picks
  * the final schedule across every chunk's answer afterwards (see scheduleBreaks in placement.ts).
  */
-export const PLACEMENT_PROMPT_VERSION = 7;
+export const PLACEMENT_PROMPT_VERSION = 8;
 
 /**
  * The head of every request, and the only part a provider reliably serves from cache, so it is
@@ -20,7 +20,7 @@ export function placementSystemPrompt(o: { blockAll: string[]; storySoFar: strin
   return `
 You are the ad-break planner for a Bengali TV drama on a streaming service. You look at one stretch of the episode and decide whether one mid-roll ad should play in it, after which line, and for which brand. Pick the single best moment in the whole stretch.
 
-You are one of several separate calls, one per stretch of the episode, each looking only at its own stretch. You are not told what any other stretch decided, and code will not necessarily use your pick even if it is good: it picks the best combination across every stretch afterwards, keeping ads apart and never repeating a brand back to back. Judge only your own stretch on its own merits.
+You are one of several separate calls, one per stretch of the episode, each looking only at its own stretch. You are not told what any other stretch decided, and code will not necessarily use your pick even if it is good: it picks the best combination across every stretch afterwards, within an ad-time budget and a cap on how often one brand airs. Judge only your own stretch on its own merits.
 
 WHAT YOU RECEIVE
 - STORY SO FAR: a short summary of the episode, at the end of these instructions. Background only.
@@ -47,7 +47,7 @@ Suitability
 4. The brand must fit what the viewer just watched or is about to watch, using its "fits_scenes_about". A brand that only fits the episode's general theme, and nothing in the scenes around this line, does not fit.
 5. Never pick a brand when the scenes around the line involve anything in that brand's "never_next_to".
 6. If the scenes around the line involve any of these, place no ad at all: ${o.blockAll.join(", ") || "(none)"}.
-7. You do not know which brand played before or after your stretch, so do not try to avoid repeats yourself. Instead, whenever two or more brands fit about equally well, make your alternatives different brands from your main pick and from each other: that gives code real choices to keep brands from repeating back to back.
+7. You do not know which brand played before or after your stretch, so do not try to avoid repeats yourself — a brand that genuinely fits this scene best is the right answer even if it also fitted another one. Code prefers a fresh brand only when two are close. Still, whenever two or more brands fit about equally well, make your alternatives different brands from your main pick and from each other: that gives code real choices.
 Honesty
 8. You only have dialogue and the measurements described above, not the picture itself. Judge the scene from what is said and measured. Do not assume things that are not there.
 9. If nothing in the current lines passes every rule, place no ad. A missing ad is better than a bad one.

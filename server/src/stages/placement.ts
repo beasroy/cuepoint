@@ -5,7 +5,7 @@
 // stretch on its own merits. Code decides where exactly each pick's cut goes, rejects anything unsafe
 // or below a strict fit floor (no-ad zone, negative contexts, fit < placement.minBrandFit), then —
 // once every chunk has answered — chooses the best combination across all of them: highest total
-// quality subject to the ad-load budget and never repeating a brand back to back (see
+// quality subject to the ad-load budget and a cap on how often one brand airs (see
 // scheduleBreaks). There is no minimum gap between ads: the fit floor alone gates what plays. A cut
 // that then fails the speech check is dropped and the schedule is redrawn without it.
 import type { Brand, Break, Catalogue, Creative, CutDialogue, IngestArtifact, Interval, LineRef, ProgrammeContext, ScheduleWeights, Segment, SelectionLog, Signals, Transcript } from "shared";
@@ -29,7 +29,7 @@ import { pickCreative, shortestCreative } from "./creatives";
 import { listenCheck } from "./listen";
 
 /** Bump when the chunk, cut, scheduling or check logic below changes, so cached placements are recomputed. */
-export const PLACEMENT_LOGIC_VERSION = 17;
+export const PLACEMENT_LOGIC_VERSION = 18;
 
 /** Safety valve for pathological inputs; real episodes explore a few thousand schedules at most (see select.ts). */
 const MAX_SEARCH_NODES = 500_000;
@@ -142,7 +142,7 @@ export function freeIntervals(span: Interval, words: Interval[], pad: number): I
  * other option or chunk. Empty = passes. Relies on the contexts the model reported as nearby for
  * THIS option's own line — each option carries its own list, so a sensitive scene beside one option
  * never blocks another further away, and one beside an alternative is still caught (there is no
- * separate scene analysis). Not repeating a brand back to back is a separate, later check (see
+ * separate scene analysis). How often a brand may air is a separate, later check (see
  * scheduleBreaks): it depends on which chunks end up adjacent in the final schedule, which isn't
  * known until every chunk has answered.
  */
@@ -272,9 +272,12 @@ export const combinedScore = (item: Pick<ScheduleItem, "fit" | "pauseSec">, weig
 export const maxBrandRepeats = (durationSec: number): number => Math.min(3, Math.max(2, Math.round(durationSec / 1800)));
 
 /**
- * Picks the highest-total-quality combination of at most one item per chunk, subject to: the
- * ad-load budget, never the same brand as the adjacent pick, and the repeat cap — with a score
- * penalty pushing a fresh brand ahead of a repeat before the cap forces it. There is no minimum gap
+ * Picks the highest-total-quality combination of at most one item per chunk, subject to the ad-load
+ * budget and the repeat cap, with a score penalty pushing a fresh brand ahead of a repeat before the
+ * cap forces it. A brand may air on two breaks in a row: the penalty means it only does so when it
+ * is the clearly better moment, which is the answer a viewer would give too — the same advertiser
+ * against a scene that genuinely suits it beats a worse-fitting one chosen only for variety. There
+ * is no minimum gap
  * between ads and no target ad count: every item that has already cleared the fit floor (0.7 by
  * default; see checkOption) and every other content check is free to be scheduled as close to
  * another as the content allows, and there is no preference for more ads over fewer either — the
@@ -301,9 +304,7 @@ export function scheduleBreaks(inp: ScheduleInputs): { picks: ScheduledPick[]; r
     }
     if (gi >= groups.length) return;
     dfs(gi + 1, adUsed, total); // skip this chunk entirely
-    const last = path.at(-1);
     for (const item of groups[gi]) {
-      if (last && item.brandId === last.item.brandId) continue;
       const priorUses = brandCounts.get(item.brandId) ?? 0;
       if (priorUses >= inp.maxBrandRepeats) continue;
       const brand = brandById.get(item.brandId);
@@ -345,7 +346,7 @@ export function scheduleBreaks(inp: ScheduleInputs): { picks: ScheduledPick[]; r
     const before = [...picks].reverse().find((p) => p.item.cutTime < item.cutTime);
     const after = picks.find((p) => p.item.cutTime > item.cutTime);
     if (before?.item.brandId === item.brandId || after?.item.brandId === item.brandId) {
-      return "same brand as the adjacent accepted break, and a higher-scoring choice covers that spot";
+      return "same brand as the adjacent accepted break, which costs it the repeat penalty, and a higher-scoring choice covers that spot";
     }
     const uses = picks.filter((p) => p.item.brandId === item.brandId).length;
     if (uses >= inp.maxBrandRepeats) {
